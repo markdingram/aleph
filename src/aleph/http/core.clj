@@ -26,7 +26,7 @@
      HttpResponse HttpResponseStatus
      DefaultHttpContent
      HttpVersion
-     LastHttpContent]
+     LastHttpContent HttpChunkedInput]
     [java.io
      File
      RandomAccessFile
@@ -38,7 +38,8 @@
     [java.util.concurrent
      ConcurrentHashMap]
     [java.util.concurrent.atomic
-     AtomicBoolean]))
+     AtomicBoolean]
+    (io.netty.handler.stream ChunkedFile ChunkedWriteHandler)))
 
 (def non-standard-keys
   (let [ks ["Content-MD5"
@@ -307,7 +308,15 @@
 
     (netty/write-and-flush ch empty-last-content)))
 
-(defn send-file-body [ch ^HttpMessage msg ^File file]
+(defn send-chunked-file [ch ^HttpMessage msg ^File file]
+  (let [raf (RandomAccessFile. file "r")
+        len (.length raf)
+        ci (HttpChunkedInput. (ChunkedFile. raf))]
+    (try-set-content-length! msg len)
+    (netty/write ch msg)
+    (netty/write-and-flush ch ci)))
+
+(defn send-file-region [ch ^HttpMessage msg ^File file]
   (let [raf (RandomAccessFile. file "r")
         len (.length raf)
         fc (.getChannel raf)
@@ -316,6 +325,11 @@
     (netty/write ch msg)
     (netty/write ch fr)
     (netty/write-and-flush ch empty-last-content)))
+
+(defn send-file-body [ch ^HttpMessage msg ^File file]
+  (if (-> ch (.pipeline) (.get ChunkedWriteHandler))
+    (send-chunked-file ch msg file)
+    (send-file-region ch msg file)))
 
 (defn send-contiguous-body [ch ^HttpMessage msg body]
   (let [body (if body
